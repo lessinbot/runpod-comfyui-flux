@@ -8,6 +8,9 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  BASE_IMAGE: docker.io/runpod/worker-comfyui:5.8.5-flux1-dev-fp8
+  LORA_URL: https://huggingface.co/stablediffusionapi/load_lora_embeddings/resolve/main/NSFW-flux-lora.safetensors
+  LORA_PATH: comfyui/models/loras/NSFW-flux-lora.safetensors
 
 jobs:
   build:
@@ -19,30 +22,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
+      - name: Install crane
+        run: |
+          VERSION=0.20.2
+          curl -sL "https://github.com/google/go-containerregistry/releases/download/v${VERSION}/go-containerregistry_Linux_x86_64.tar.gz" | tar -xzf - crane
+          chmod +x crane
+          sudo mv crane /usr/local/bin/
 
-      - name: Check disk space
-        run: df -h
+      - name: Auth crane with GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download LoRA and create layer
+        run: |
+          mkdir -p $(dirname ${{ env.LORA_PATH }})
+          curl -sL -o ${{ env.LORA_PATH }} "${{ env.LORA_URL }}"
+          ls -lh ${{ env.LORA_PATH }}
+          # Create a tar with the file at the absolute path it needs in the container
+          tar -cf lora-layer.tar ${{ env.LORA_PATH }}
+          ls -lh lora-layer.tar
 
-      - uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+      - name: Append LoRA layer to base image and push
+        run: |
+          # crane append adds a layer to an existing image without pulling/extracting it
+          # This only uploads the ~18MB layer, not the full 12.9GB base
+          crane append \
+            --base ${{ env.BASE_IMAGE }} \
+            --new_layer lora-layer.tar \
+            --new_tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+          # Also tag with commit SHA
+          crane tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest ${{ github.sha }}
+
+          echo "Done! Image pushed to ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
