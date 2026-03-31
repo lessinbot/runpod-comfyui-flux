@@ -1,4 +1,4 @@
-FROM runpod/worker-comfyui:3.3.0-flux1-dev
+FROM runpod/worker-comfyui:5.8.5-flux1-dev-fp8
 
 # Download FLUX NSFW Unlock LoRA from Civitai
 RUN mkdir -p /comfyui/models/loras && \
