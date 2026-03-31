@@ -9,6 +9,8 @@ env:
   BASE_IMAGE: docker.io/runpod/worker-comfyui:5.8.5-flux1-dev-fp8
   LORA_URL: https://huggingface.co/stablediffusionapi/load_lora_embeddings/resolve/main/NSFW-flux-lora.safetensors
   LORA_PATH: comfyui/models/loras/NSFW-flux-lora.safetensors
+  REALVIS_URL: https://huggingface.co/SG161222/RealVisXL_V5.0/resolve/main/RealVisXL_V5.0_fp16.safetensors
+  REALVIS_PATH: comfyui/models/checkpoints/RealVisXL_V5.0_fp16.safetensors
   GHCR_IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
@@ -31,20 +33,40 @@ jobs:
       - name: Auth crane with GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Download LoRA and create layer
+      - name: Download LoRA
         run: |
           mkdir -p $(dirname ${{ env.LORA_PATH }})
           curl -sL -o ${{ env.LORA_PATH }} "${{ env.LORA_URL }}"
           ls -lh ${{ env.LORA_PATH }}
+
+      - name: Download RealVisXL checkpoint
+        run: |
+          mkdir -p $(dirname ${{ env.REALVIS_PATH }})
+          curl -sL -L -o ${{ env.REALVIS_PATH }} "${{ env.REALVIS_URL }}"
+          ls -lh ${{ env.REALVIS_PATH }}
+
+      - name: Create layers and append to base image
+        run: |
+          # Create LoRA layer
           tar -cf lora-layer.tar ${{ env.LORA_PATH }}
           ls -lh lora-layer.tar
 
-      - name: Append LoRA layer and push to GHCR
-        run: |
+          # Create RealVisXL layer
+          tar -cf realvis-layer.tar ${{ env.REALVIS_PATH }}
+          ls -lh realvis-layer.tar
+
+          # Append LoRA layer first
           crane append \
             --base ${{ env.BASE_IMAGE }} \
             --new_layer lora-layer.tar \
+            --new_tag ${{ env.GHCR_IMAGE }}:with-lora
+
+          # Append RealVisXL layer on top
+          crane append \
+            --base ${{ env.GHCR_IMAGE }}:with-lora \
+            --new_layer realvis-layer.tar \
             --new_tag ${{ env.GHCR_IMAGE }}:latest
+
           crane tag ${{ env.GHCR_IMAGE }}:latest ${{ github.sha }}
           echo "Pushed to ${{ env.GHCR_IMAGE }}:latest"
 
