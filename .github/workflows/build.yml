@@ -9,9 +9,7 @@ env:
   BASE_IMAGE: docker.io/runpod/worker-comfyui:5.8.5-flux1-dev-fp8
   LORA_URL: https://huggingface.co/stablediffusionapi/load_lora_embeddings/resolve/main/NSFW-flux-lora.safetensors
   LORA_PATH: comfyui/models/loras/NSFW-flux-lora.safetensors
-  # Push to both GHCR (private backup) and ttl.sh (public, for RunPod)
   GHCR_IMAGE: ghcr.io/${{ github.repository }}
-  PUBLIC_IMAGE: ttl.sh/lessinbot-comfyui-flux-nsfw:365d
 
 jobs:
   build:
@@ -50,7 +48,19 @@ jobs:
           crane tag ${{ env.GHCR_IMAGE }}:latest ${{ github.sha }}
           echo "Pushed to ${{ env.GHCR_IMAGE }}:latest"
 
-      - name: Copy to public registry (ttl.sh) for RunPod
+      - name: Make GHCR package public
         run: |
-          crane copy ${{ env.GHCR_IMAGE }}:latest ${{ env.PUBLIC_IMAGE }}
-          echo "Pushed to ${{ env.PUBLIC_IMAGE }}"
+          # Extract package name from repo (lowercase)
+          PACKAGE_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+
+          # Change package visibility to public using GitHub API
+          curl -sL -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/users/${OWNER}/packages/container/${PACKAGE_NAME}" \
+            -d '{"visibility":"public"}' || echo "Note: May need PAT with packages scope to change visibility"
+
+          # Verify accessibility
+          crane manifest ${{ env.GHCR_IMAGE }}:latest > /dev/null 2>&1 && echo "Image is accessible" || echo "Image may still be private"
