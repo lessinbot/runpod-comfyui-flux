@@ -6,11 +6,12 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
   BASE_IMAGE: docker.io/runpod/worker-comfyui:5.8.5-flux1-dev-fp8
   LORA_URL: https://huggingface.co/stablediffusionapi/load_lora_embeddings/resolve/main/NSFW-flux-lora.safetensors
   LORA_PATH: comfyui/models/loras/NSFW-flux-lora.safetensors
+  # Push to both GHCR (private backup) and ttl.sh (public, for RunPod)
+  GHCR_IMAGE: ghcr.io/${{ github.repository }}
+  PUBLIC_IMAGE: ttl.sh/lessinbot-comfyui-flux-nsfw:365d
 
 jobs:
   build:
@@ -37,20 +38,19 @@ jobs:
           mkdir -p $(dirname ${{ env.LORA_PATH }})
           curl -sL -o ${{ env.LORA_PATH }} "${{ env.LORA_URL }}"
           ls -lh ${{ env.LORA_PATH }}
-          # Create a tar with the file at the absolute path it needs in the container
           tar -cf lora-layer.tar ${{ env.LORA_PATH }}
           ls -lh lora-layer.tar
 
-      - name: Append LoRA layer to base image and push
+      - name: Append LoRA layer and push to GHCR
         run: |
-          # crane append adds a layer to an existing image without pulling/extracting it
-          # This only uploads the ~18MB layer, not the full 12.9GB base
           crane append \
             --base ${{ env.BASE_IMAGE }} \
             --new_layer lora-layer.tar \
-            --new_tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            --new_tag ${{ env.GHCR_IMAGE }}:latest
+          crane tag ${{ env.GHCR_IMAGE }}:latest ${{ github.sha }}
+          echo "Pushed to ${{ env.GHCR_IMAGE }}:latest"
 
-          # Also tag with commit SHA
-          crane tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest ${{ github.sha }}
-
-          echo "Done! Image pushed to ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+      - name: Copy to public registry (ttl.sh) for RunPod
+        run: |
+          crane copy ${{ env.GHCR_IMAGE }}:latest ${{ env.PUBLIC_IMAGE }}
+          echo "Pushed to ${{ env.PUBLIC_IMAGE }}"
